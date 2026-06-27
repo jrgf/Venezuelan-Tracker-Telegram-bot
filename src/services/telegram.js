@@ -27,12 +27,29 @@ async function sendText(chatId, text) {
     try {
         let lastResponse;
         for (const chunk of splitMessage(text)) {
-            const { data } = await axios.post(getApiUrl('sendMessage'), {
-                chat_id: chatId,
-                text: chunk,
-                disable_web_page_preview: true,
-            }, { timeout: 10000 });
-            lastResponse = data;
+            let response;
+            try {
+                const { data } = await axios.post(getApiUrl('sendMessage'), {
+                    chat_id: chatId,
+                    text: chunk,
+                    parse_mode: 'HTML',
+                    disable_web_page_preview: true,
+                }, { timeout: 10000 });
+                response = data;
+            } catch (err) {
+                if (err.response?.status === 400) {
+                    console.warn('[Telegram] Fallback a texto plano por error de HTML:', err.response?.data?.description);
+                    const { data } = await axios.post(getApiUrl('sendMessage'), {
+                        chat_id: chatId,
+                        text: chunk,
+                        disable_web_page_preview: true,
+                    }, { timeout: 10000 });
+                    response = data;
+                } else {
+                    throw err;
+                }
+            }
+            lastResponse = response;
         }
         return lastResponse;
     } catch (err) {
