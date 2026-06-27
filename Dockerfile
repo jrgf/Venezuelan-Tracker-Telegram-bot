@@ -10,10 +10,10 @@ RUN npm ci --omit=dev
 COPY src/ ./src/
 
 # Create non-root user
-RUN addgroup -S fzap && adduser -S fzap -G fzap \
-    && chown -R fzap:fzap /app
+RUN addgroup -S bot && adduser -S bot -G bot \
+    && chown -R bot:bot /app
 
-USER fzap
+USER bot
 
 EXPOSE 3000
 

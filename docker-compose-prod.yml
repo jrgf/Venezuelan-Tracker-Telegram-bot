@@ -1,85 +1,11 @@
 services:
-
-  # ─── PostgreSQL ───────────────────────────────────────────────
-  postgres:
-    image: postgres:15
-    container_name: fzap_postgres
-    restart: always
-    environment:
-      POSTGRES_USER: fzap
-      POSTGRES_PASSWORD: fzap123
-      POSTGRES_DB: fzap
-    volumes:
-      - fzap_postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U fzap" ]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    networks:
-      - bot_net
-
-  # ─── Fzap API ─────────────────────────────────────────────────
-  fzap:
-    image: dncarbonell/fzap:latest
-    container_name: fzap_api
-    restart: always
-    ports:
-      - "8081:8080"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      - TZ=America/Sao_Paulo
-      - FZAP_LANGUAGE=pt-BR
-      - PUBLIC_BASE_URL=http://localhost:8081
-      - ADMIN_TOKEN=${FZAP_API_KEY}
-      - DB_DRIVER=postgres
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_NAME=fzap
-      - DB_USER=fzap
-      - DB_PASSWORD=fzap123
-      - SESSION_DEVICE_NAME=Fzap
-      - WEBHOOK_FORMAT=json
-    volumes:
-      - fzap_dbdata:/app/dbdata
-      - fzap_files:/app/files
-      - fzap_logos:/app/data/public-folder-logos
-    networks:
-      - bot_net
-
-
-  # ─── WhatsApp Bot (Sismo Venezuela 2026) ─────────────────────
-  whatsapp_bot_sismo:
+  telegram_bot_sismo:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: whatsapp_bot_sismo
+    container_name: telegram_bot_sismo
     restart: always
-    depends_on:
-      - fzap
     environment:
-      - PORT=3000
-      - FZAP_API_URL=http://fzap:8080
-      - FZAP_API_KEY=${FZAP_API_KEY}
-      - FZAP_INSTANCE=bot_instance
-      - FZAP_WEBHOOK_URL=http://whatsapp-bot-sismo.local:3000/webhook/messages
-      - FZAP_WEBHOOK_SECRET=webhook_secret_secure_sismo
-      - SITE_URL=https://localizadosvenezuela.com
-    ports:
-      - "3004:3000"
-    networks:
-      bot_net:
-        aliases:
-          - whatsapp-bot-sismo.local
-
-networks:
-  bot_net:
-    driver: bridge
-
-volumes:
-  fzap_postgres_data:
-  fzap_dbdata:
-  fzap_files:
-  fzap_logos:
+      - NODE_ENV=production
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - SITE_URL=${SITE_URL:-https://localizadosvenezuela.com}

@@ -1,75 +1,58 @@
 /**
  * Bot Buscador de Personas — Terremoto Venezuela 2026
- * Entry point: Express server with Fzap API webhooks.
- *
- * Security hardening applied:
- *  - /health restricted to localhost
- *  - Rate limiting on webhook endpoint
- *  - JSON payload limit reduced to 5mb
- *  - Helmet HTTP security headers
+ * Telegram long-polling entry point.
  */
 
-const express = require('express');
-const morgan = require('morgan');
-const helmet = require('helmet');
-const rateLimit = require('express-rate-limit');
 const config = require('./config');
-const webhookAuth = require('./webhook/auth');
-const webhookHandler = require('./webhook/handler');
-const { provisionFzap } = require('./services/fzapProvision');
+const { getUpdates, deleteWebhook } = require('./services/telegram');
+const { parseMessage } = require('./telegramParser');
+const { routeMessage } = require('./sismoRouter');
+const { enqueue } = require('./utils/taskQueue');
 
+const POLL_TIMEOUT_SECONDS = 25;
+const RETRY_DELAY_MS = 3000;
 
-const app = express();
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
 
-app.use(helmet());
-app.disable('x-powered-by');
-app.use(express.json({ limit: '5mb', type: 'application/json' }));
-app.use(morgan('[:date[iso]] :method :url :status :response-time ms'));
-
-const webhookLimiter = rateLimit({
-    windowMs: 60 * 1000,
-    max: 120,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: { error: 'Too many requests' },
-});
-
-app.get('/health', (req, res) => {
-    const clientIp = req.ip || req.connection.remoteAddress;
-    const allowedIps = ['127.0.0.1', '::1', '::ffff:127.0.0.1'];
-    if (!allowedIps.includes(clientIp)) {
-        return res.status(404).json({ error: 'Not found' });
+async function processUpdate(update) {
+    const parsed = parseMessage(update);
+    if (!parsed || parsed.chatType !== 'private') {
+        return;
     }
-    res.json({ status: 'ok' });
-});
 
-app.use('/webhook', webhookLimiter, webhookAuth, webhookHandler);
+    console.log(`[Telegram] Message from (${parsed.remoteJid}): ${parsed.messageType}`);
+    await enqueue(parsed.remoteJid, async () => routeMessage(parsed));
+}
 
-app.use((req, res) => {
-    res.status(404).json({ error: 'Route not found' });
-});
+async function poll() {
+    if (!config.telegram.botToken) {
+        console.error('[Telegram] TELEGRAM_BOT_TOKEN is not set.');
+        process.exitCode = 1;
+        return;
+    }
 
-app.use((err, req, res, next) => {
-    console.error('[Server] Unhandled error:', err.constructor.name);
-    res.status(500).json({ error: 'Internal server error' });
-});
+    await deleteWebhook();
+    console.log('[Telegram] Polling started.');
 
-const PORT = config.port;
-app.listen(PORT, async () => {
-    console.log(`
-┌──────────────────────────────────────────────┐
-│  🇻🇪 Buscador de Personas — Sismo VE 2026   │
-├──────────────────────────────────────────────┤
-│  Server running on port ${String(PORT).padEnd(21)}│
-│  Webhook: POST /webhook/messages             │
-│  Health:  GET  /health (localhost only)       │
-└──────────────────────────────────────────────┘
-  `);
+    let offset = 0;
+    while (true) {
+        try {
+            const updates = await getUpdates(offset, POLL_TIMEOUT_SECONDS);
+            for (const update of updates) {
+                offset = update.update_id + 1;
+                await processUpdate(update);
+            }
+        } catch (err) {
+            console.error('[Telegram] Polling error:', err.response?.status || err.constructor.name);
+            await sleep(RETRY_DELAY_MS);
+        }
+    }
+}
 
-    if (!config.fzap.apiUrl) console.warn('⚠️  FZAP_API_URL not set');
-    if (!config.fzap.instanceName) console.warn('⚠️  FZAP_INSTANCE not set');
+if (require.main === module) {
+    poll();
+}
 
-    await provisionFzap();
-});
-
-module.exports = app;
+module.exports = { poll, processUpdate };

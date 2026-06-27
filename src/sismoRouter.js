@@ -1,10 +1,10 @@
 const axios = require('axios');
-const { sendText } = require('./services/fzap');
+const config = require('./config');
+const { sendText } = require('./services/telegram');
 
-async function routeMessage(parsed, instance) {
+async function routeMessage(parsed) {
     const jid = parsed.remoteJid;
     const text = parsed.text?.trim() || '';
-    const botInstance = instance || process.env.FZAP_INSTANCE || 'bot_instance';
 
     if (parsed.messageType !== 'text') {
         return;
@@ -12,11 +12,15 @@ async function routeMessage(parsed, instance) {
 
     const queryText = text.trim();
     const lowerQueryText = queryText.toLowerCase();
+    const command = lowerQueryText.startsWith('/')
+        ? lowerQueryText.split(/\s+/, 1)[0].split('@', 1)[0]
+        : '';
 
     if (
         queryText === '#' ||
-        lowerQueryText === '/ayuda' ||
-        lowerQueryText === '/help' ||
+        command === '/start' ||
+        command === '/ayuda' ||
+        command === '/help' ||
         lowerQueryText === 'hola' ||
         lowerQueryText === 'ayuda' ||
         lowerQueryText === 'help'
@@ -32,18 +36,21 @@ async function routeMessage(parsed, instance) {
             "",
             "💡 _Nota: La base de datos se alimenta en tiempo real con reportes oficiales de personas localizadas._"
         ].join('\n');
-        return sendText(jid, welcome, botInstance);
+        return sendText(jid, welcome);
+    }
+
+    if (command) {
+        return;
     }
 
     if (queryText.length < 2) {
         return sendText(
             jid,
             "⚠️ La consulta es muy corta. Por favor, escribe al menos 2 caracteres para iniciar la búsqueda.",
-            botInstance
         );
     }
 
-    const siteUrl = process.env.SITE_URL || 'https://localizadosvenezuela.com';
+    const siteUrl = config.siteUrl;
 
     try {
         const response = await axios.get(`${siteUrl}/api/v1/localizados`, {
@@ -68,7 +75,7 @@ async function routeMessage(parsed, instance) {
                 "",
                 `🔗 También puedes buscar en la web oficial: ${siteUrl}/buscar?q=${encodeURIComponent(queryText)}`
             ].join('\n');
-            return sendText(jid, noResults, botInstance);
+            return sendText(jid, noResults);
         }
 
         const displayRows = rows.slice(0, 5);
@@ -95,13 +102,12 @@ async function routeMessage(parsed, instance) {
             responseMessage += `🔗 _Ver más información en:_ \n${siteUrl}`;
         }
 
-        return sendText(jid, responseMessage.trim(), botInstance);
+        return sendText(jid, responseMessage.trim());
     } catch (err) {
         console.error('[Sismo] Error calling Localizados API:', err.message);
         return sendText(
             jid,
             "⚠️ Ocurrió un error al procesar tu búsqueda. Por favor, intenta de nuevo más tarde.",
-            botInstance
         );
     }
 }
