@@ -1,0 +1,30 @@
+{
+  "name": "venezuelan-earthquake-finder-bot",
+  "version": "1.0.0",
+  "description": "Bot de WhatsApp para buscar personas localizadas tras el terremoto de Venezuela 2026, usando Fzap API y SQLite.",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "keywords": [
+    "whatsapp",
+    "fzap-api",
+    "earthquake-finder",
+    "venezuela",
+    "chatbot"
+  ],
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "axios": "^1.7.0",
+    "dotenv": "^16.4.0",
+    "express": "^4.21.0",
+    "express-rate-limit": "^8.3.1",
+    "helmet": "^8.1.0",
+    "morgan": "^1.10.0"
+  }
+}

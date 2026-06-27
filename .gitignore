@@ -1,0 +1,14 @@
+node_modules/
+.env
+logs/
+*.log
+dist/
+.DS_Store
+
+# Private
+/docs_internal
+/oracle_keys
+/digital_keys
+
+# Futura agents
+/.claude
