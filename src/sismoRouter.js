@@ -2,6 +2,22 @@ const axios = require('axios');
 const config = require('./config');
 const { sendText } = require('./services/telegram');
 
+function normalizeText(text) {
+    if (!text) return '';
+    return text
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '');
+}
+
+function escapeHtml(text) {
+    if (!text) return '';
+    return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
 async function routeMessage(parsed) {
     const jid = parsed.remoteJid;
     const text = parsed.text?.trim() || '';
@@ -26,15 +42,15 @@ async function routeMessage(parsed) {
         lowerQueryText === 'help'
     ) {
         const welcome = [
-            "🇻🇪 *Buscador de Personas Localizadas — Terremoto Venezuela 2026* 🇻🇪",
+            "🇻🇪 <b>Buscador de Personas Localizadas — Terremoto Venezuela 2026</b> 🇻🇪",
             "",
             "Este servicio automatizado te permite consultar si un familiar o conocido se encuentra en las listas de personas localizadas en centros de asistencia, hospitales o refugios oficiales.",
             "",
-            "📢 *¿Cómo realizar una búsqueda?*",
-            "• *Por cédula*: Envía el número de cédula (mínimo 4 dígitos). Ejemplo: `17849208`",
-            "• *Por nombre*: Envía el nombre y/o apellido de la persona. Ejemplo: `Johanna Aguero`",
+            "📢 <b>¿Cómo realizar una búsqueda?</b>",
+            "• <b>Por cédula</b>: Envía el número de cédula (mínimo 4 dígitos). Ejemplo: <code>17849208</code>",
+            "• <b>Por nombre</b>: Envía el nombre y/o apellido de la persona. Ejemplo: <code>Johanna Aguero</code>",
             "",
-            "💡 _Nota: La base de datos se alimenta en tiempo real con reportes oficiales de personas localizadas._"
+            "💡 <i>Nota: La base de datos se alimenta en tiempo real con reportes oficiales de personas localizadas.</i>"
         ].join('\n');
         return sendText(jid, welcome);
     }
@@ -51,23 +67,42 @@ async function routeMessage(parsed) {
     }
 
     const siteUrl = config.siteUrl;
+    const isCedula = /^\d+$/.test(queryText);
+    const limit = isCedula ? 6 : 100;
 
     try {
         const response = await axios.get(`${siteUrl}/api/v1/localizados`, {
             params: {
                 q: queryText,
                 page: 1,
-                limit: 6
+                limit
             },
             timeout: 8000
         });
 
         const rows = response.data?.data || [];
-        const total = response.data?.meta?.total || rows.length;
+        let total = 0;
+        let hasMore = false;
+        let displayRows = [];
 
-        if (rows.length === 0) {
+        if (isCedula) {
+            total = response.data?.meta?.total || rows.length;
+            displayRows = rows.slice(0, 5);
+            hasMore = total > 5 || rows.length > 5;
+        } else {
+            const queryWords = normalizeText(queryText).split(/\s+/).filter(Boolean);
+            const filteredRows = rows.filter(row => {
+                const normalizedName = normalizeText(row.nombreCompleto);
+                return queryWords.every(word => normalizedName.includes(word));
+            });
+            total = filteredRows.length;
+            displayRows = filteredRows.slice(0, 5);
+            hasMore = filteredRows.length > 5;
+        }
+
+        if (displayRows.length === 0) {
             const noResults = [
-                `🔍 No se encontraron registros para: "${queryText}"`,
+                `🔍 No se encontraron registros para: "${escapeHtml(queryText)}"`,
                 "",
                 "Ten en cuenta lo siguiente:",
                 "• Este registro contiene únicamente personas ya localizadas y confirmadas.",
@@ -78,28 +113,25 @@ async function routeMessage(parsed) {
             return sendText(jid, noResults);
         }
 
-        const displayRows = rows.slice(0, 5);
-        const hasMore = total > 5 || rows.length > 5;
-
-        let responseMessage = `🔍 *Resultados para: "${queryText}"* (Encontrados: ${total}):\n\n`;
+        let responseMessage = `🔍 <b>Resultados para: "${escapeHtml(queryText)}"</b> (Encontrados: ${total}):\n\n`;
 
         for (const row of displayRows) {
-            responseMessage += `👤 *${(row.nombreCompleto || '').toUpperCase()}*\n`;
-            if (row.cedula) responseMessage += `🆔 Cédula: ${row.cedula}\n`;
-            if (row.edad) responseMessage += `🎂 Edad: ${row.edad} años\n`;
-            responseMessage += `🏥 Hospital/Refugio: ${row.lugarNombre || 'No especificado'}\n`;
+            responseMessage += `👤 <b>${escapeHtml((row.nombreCompleto || '').toUpperCase())}</b>\n`;
+            if (row.cedula) responseMessage += `🆔 Cédula: ${escapeHtml(row.cedula)}\n`;
+            if (row.edad) responseMessage += `🎂 Edad: ${escapeHtml(row.edad)} años\n`;
+            responseMessage += `🏥 Hospital/Refugio: ${escapeHtml(row.lugarNombre || 'No especificado')}\n`;
             
             const nota = row.observaciones || (row.condicion !== 'desconocido' ? row.condicion : '');
-            if (nota) responseMessage += `ℹ️ Nota: ${nota}\n`;
+            if (nota) responseMessage += `ℹ️ Nota: ${escapeHtml(nota)}\n`;
             
             responseMessage += `🔗 Ficha: ${siteUrl}/localizados/${row.slug}\n`;
             responseMessage += `-------------------\n\n`;
         }
 
         if (hasMore) {
-            responseMessage += `⚠️ _Hay más resultados coincidentes. Puedes verlos todos buscando en la web:_ \n🔗 ${siteUrl}/buscar?q=${encodeURIComponent(queryText)}`;
+            responseMessage += `⚠️ <i>Hay más resultados coincidentes. Puedes verlos todos buscando en la web:</i> \n🔗 ${siteUrl}/buscar?q=${encodeURIComponent(queryText)}`;
         } else {
-            responseMessage += `🔗 _Ver más información en:_ \n${siteUrl}`;
+            responseMessage += `🔗 <i>Ver más información en:</i> \n${siteUrl}`;
         }
 
         return sendText(jid, responseMessage.trim());
