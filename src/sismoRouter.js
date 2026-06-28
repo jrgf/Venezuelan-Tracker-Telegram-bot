@@ -64,10 +64,13 @@ async function routeMessage(parsed) {
             "📦 <b>3. Centros de Acopio (Donaciones)</b>:",
             "• Envía la palabra <b>acopio</b> y la ciudad. Ejemplo: <code>acopio Valencia</code> o <code>acopio Caracas</code>",
             "",
-            "🚨 <b>4. Teléfonos de Emergencia</b>:",
+            "📋 <b>4. Necesidades Urgentes (Insumos)</b>:",
+            "• Envía la palabra <b>necesidad</b> y opcionalmente la ciudad. Ejemplo: <code>necesidad Caracas</code> o <code>necesidad La Guaira</code>",
+            "",
+            "🚨 <b>5. Teléfonos de Emergencia</b>:",
             "• Escribe la palabra <b>emergencia</b> o <b>telefono</b> para ver el directorio de primera respuesta.",
             "",
-            "💡 <i>Nota: Datos actualizados de forma colaborativa por voluntarios y reportes oficiales de SOS Venezuela y AcopioVE.</i>"
+            "💡 <i>Nota: Datos actualizados de forma colaborativa por voluntarios y reportes oficiales de SOS Venezuela, AcopioVE y ResponseGrid.</i>"
         ].join('\n');
         return sendText(jid, welcome);
     }
@@ -251,6 +254,96 @@ async function routeMessage(parsed) {
         } catch (err) {
             console.error('[AcopioVE] Error fetching acopio:', err.message);
             return sendText(jid, "⚠️ Ocurrió un error al buscar centros de acopio. Por favor, intenta de nuevo.");
+        }
+    }
+
+    // 4. Buscar Necesidades Urgentes (ResponseGrid API)
+    if (lowerQueryText.startsWith('necesidad') || lowerQueryText.startsWith('necesidades') || lowerQueryText.startsWith('insumos')) {
+        const parts = queryText.split(/\s+/);
+        let ciudad = parts.slice(1).join(' ').trim();
+
+        if (ciudad.toLowerCase().startsWith('en ')) {
+            ciudad = ciudad.slice(3).trim();
+        } else if (ciudad.toLowerCase().startsWith('de ')) {
+            ciudad = ciudad.slice(3).trim();
+        }
+
+        const cacheKey = `necesidades:${ciudad}`;
+        const cachedData = cache.get(cacheKey);
+
+        if (cachedData) {
+            return sendText(jid, cachedData);
+        }
+
+        try {
+            const response = await axios.get('https://api.responsegrid.app/emergencies/11111111-1111-4111-8111-111111111111/public/needs', { timeout: 8000 });
+            const needs = response.data || [];
+
+            if (needs.length === 0) {
+                const noNeedsMsg = ciudad 
+                    ? `🔍 No se encontraron necesidades urgentes registradas en la ciudad de "${escapeHtml(ciudad)}".`
+                    : "🔍 No se encontraron necesidades urgentes registradas en este momento.";
+                return sendText(jid, noNeedsMsg);
+            }
+
+            // Filtrar localmente por ciudad
+            let filteredNeeds = needs;
+            if (ciudad) {
+                const normCiudad = normalizeText(ciudad);
+                filteredNeeds = needs.filter(n => {
+                    const addr = n.location?.address || '';
+                    return normalizeText(addr).includes(normCiudad);
+                });
+            }
+
+            if (filteredNeeds.length === 0) {
+                const noNeedsMsg = `🔍 No se encontraron necesidades urgentes registradas en la ciudad de "${escapeHtml(ciudad)}".`;
+                return sendText(jid, noNeedsMsg);
+            }
+
+            const displayNeeds = filteredNeeds.slice(0, 5);
+            const total = filteredNeeds.length;
+
+            const priorityLabels = {
+                urgent: '🔴 URGENTE',
+                high: '🟠 ALTA',
+                medium: '🟡 MEDIA',
+                low: '🟢 BAJA'
+            };
+
+            let responseMessage = ciudad 
+                ? `📋 <b>Necesidades Urgentes en ${escapeHtml(ciudad)}</b> (Encontrados: ${total}):\n\n`
+                : `📋 <b>Necesidades Urgentes Activas</b> (Encontrados: ${total}):\n\n`;
+
+            for (const need of displayNeeds) {
+                const pLabel = priorityLabels[need.priority] || need.priority?.toUpperCase() || '🟡 MEDIA';
+                responseMessage += `📦 <b>${escapeHtml(need.title)}</b> (${escapeHtml(pLabel)})\n`;
+                if (need.location?.address) responseMessage += `📍 Ubicación: ${escapeHtml(need.location.address)}\n`;
+                if (need.description) responseMessage += `ℹ️ Detalles: ${escapeHtml(need.description)}\n`;
+                
+                const itemsList = need.items || [];
+                if (itemsList.length > 0) {
+                    responseMessage += `📋 Artículos requeridos:\n`;
+                    for (const item of itemsList) {
+                        const unitLabel = item.unit ? ` ${item.unit}` : '';
+                        responseMessage += `• ${item.quantity}${escapeHtml(unitLabel)} de ${escapeHtml(item.name)} (${escapeHtml(item.category)})\n`;
+                    }
+                }
+                responseMessage += `-------------------\n\n`;
+            }
+
+            if (total > 5) {
+                responseMessage += `🔗 <i>Hay más necesidades registradas. Ver listado completo en:</i> \nhttps://responsegrid.app`;
+            } else {
+                responseMessage += `🔗 <i>Más detalles e inscripciones de ayuda en:</i> \nhttps://responsegrid.app`;
+            }
+
+            const finalMsg = responseMessage.trim();
+            cache.set(cacheKey, finalMsg, 120); // 2 minutos de caché
+            return sendText(jid, finalMsg);
+        } catch (err) {
+            console.error('[ResponseGrid] Error fetching needs:', err.message);
+            return sendText(jid, "⚠️ Ocurrió un error al obtener la lista de necesidades. Por favor, intenta de nuevo.");
         }
     }
 
