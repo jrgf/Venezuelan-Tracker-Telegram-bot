@@ -47,6 +47,51 @@ async function demo() {
 
     await routeMessage({ remoteJid: '12345', messageType: 'text', text: '/unknown' });
     assert.equal(sent.length, 1);
+
+    const calls = [];
+    axios.get = async (url, options = {}) => {
+        calls.push({ url, options });
+        if (url.includes('/api/v1/localizados')) {
+            const hasLocalHit = options.params?.q === 'Maria Perez';
+            return {
+                data: {
+                    data: hasLocalHit ? [{
+                        nombreCompleto: 'Maria Perez',
+                        lugarNombre: 'Hospital Central',
+                        condicion: 'desconocido',
+                        slug: 'maria-perez',
+                    }] : [],
+                    meta: { total: hasLocalHit ? 1 : 0 },
+                },
+            };
+        }
+        if (url.includes('sosvenezuela2026.com')) {
+            return {
+                data: [{
+                    display_name: 'Maria Jose Perez',
+                    status: 'seeking_info',
+                    parroquia: 'La Guaira',
+                }],
+            };
+        }
+        throw new Error(`unexpected url: ${url}`);
+    };
+
+    await routeMessage({ remoteJid: '12345', messageType: 'text', text: 'Maria Perez' });
+    assert.equal(calls.length, 2);
+    assert.equal(calls[1].options.params.q, 'Maria Perez');
+    assert.equal(calls[1].options.params.offset, undefined);
+    assert.equal(calls[1].options.params.limit, undefined);
+    assert.match(sent.at(-1).text, /MARIA PEREZ/);
+    assert.match(sent.at(-1).text, /Encontrados: 1/);
+    assert.doesNotMatch(sent.at(-1).text, /Similares en SOS Venezuela 2026/);
+    assert.doesNotMatch(sent.at(-1).text, /MARIA JOSE PEREZ/);
+
+    await routeMessage({ remoteJid: '12345', messageType: 'text', text: 'Maria Jose' });
+    assert.match(sent.at(-1).text, /No se encontraron coincidencias exactas/);
+    assert.match(sent.at(-1).text, /Similares en SOS Venezuela 2026/);
+    assert.match(sent.at(-1).text, /No son coincidencias exactas/);
+    assert.match(sent.at(-1).text, /MARIA JOSE PEREZ/);
 }
 
 demo();
