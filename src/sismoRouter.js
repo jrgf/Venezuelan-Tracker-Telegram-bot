@@ -25,6 +25,16 @@ function escapeHtml(text) {
         .replace(/>/g, '&gt;');
 }
 
+function maskCedula(cedula) {
+    if (!cedula) return '';
+    const clean = String(cedula).trim();
+    if (clean.length <= 4) return '***';
+    const start = clean.slice(0, 2);
+    const end = clean.slice(-3);
+    const middle = '*'.repeat(Math.max(3, clean.length - 5));
+    return `${start}${middle}${end}`;
+}
+
 async function routeMessage(parsed) {
     const jid = parsed.remoteJid;
     const text = parsed.text?.trim() || '';
@@ -479,22 +489,46 @@ async function routeMessage(parsed) {
             : `🔍 No se encontraron coincidencias exactas para: "${escapeHtml(queryText)}"\n\n`;
 
         for (const row of displayRows) {
+            const esMenor = row.edad && parseInt(row.edad, 10) < 18;
+
             responseMessage += `👤 <b>${escapeHtml(row.nombre.toUpperCase())}</b>\n`;
-            if (row.cedula) responseMessage += `🆔 Cédula: ${escapeHtml(row.cedula)}\n`;
+            if (row.cedula) responseMessage += `🆔 Cédula: ${escapeHtml(maskCedula(row.cedula))}\n`;
             if (row.edad) responseMessage += `🎂 Edad: ${escapeHtml(row.edad)} años\n`;
 
             if (row.fuente === 'LocalizadosVE') {
-                responseMessage += `🏥 Hospital/Refugio: ${escapeHtml(row.lugar)}\n`;
+                const lugarInfo = esMenor ? '🏥 Hospital/Refugio: <i>[Protegido por seguridad de menores]</i>' : `🏥 Hospital/Refugio: ${escapeHtml(row.lugar)}`;
+                responseMessage += `${lugarInfo}\n`;
                 responseMessage += `🟢 Estatus: LOCALIZADO (Confirmado)\n`;
-                if (row.nota) responseMessage += `ℹ️ Nota: ${escapeHtml(row.nota)}\n`;
-                responseMessage += `🔗 Ficha: ${siteUrl}/localizados/${row.slug}\n`;
+                
+                if (row.nota) {
+                    const notaInfo = esMenor ? 'ℹ️ Nota: <i>Restringida por protección al menor</i>' : `ℹ️ Nota: ${escapeHtml(row.nota)}`;
+                    responseMessage += `${notaInfo}\n`;
+                }
+                
+                if (!esMenor && row.slug) {
+                    responseMessage += `🔗 Ficha: ${siteUrl}/localizados/${row.slug}\n`;
+                } else if (esMenor) {
+                    responseMessage += `⚠️ <i>La información de ubicación detallada de menores de edad está bajo reserva por seguridad. Contacta a las autoridades competentes para verificación familiar.</i>\n`;
+                }
             } else {
+                // Exclusivo de SOS Venezuela
                 const estatusEmoji = row.estado === 'desaparecido' ? '🔴' : '🟢';
                 const statusLabel = SOS_STATUS[row.statusSos] || (row.estado === 'desaparecido' ? 'Buscando información' : 'Localizado/a con vida');
                 responseMessage += `${estatusEmoji} Estatus: ${escapeHtml(statusLabel)} (Reporte Comunitario)\n`;
-                if (row.lugar) responseMessage += `📍 Lugar/Refugio: ${escapeHtml(row.lugar)}\n`;
-                if (row.nota) responseMessage += `ℹ️ Nota: ${escapeHtml(row.nota)}\n`;
-                responseMessage += `🔗 Ficha: https://sosvenezuela2026.com (Comunidad)\n`;
+                
+                const lugarInfo = esMenor ? '📍 Lugar/Refugio: <i>[Protegido por seguridad de menores]</i>' : `📍 Lugar/Refugio: ${escapeHtml(row.lugar)}`;
+                responseMessage += `${lugarInfo}\n`;
+                
+                if (row.nota) {
+                    const notaInfo = esMenor ? 'ℹ️ Nota: <i>Restringida por protección al menor</i>' : `ℹ️ Nota: ${escapeHtml(row.nota)}`;
+                    responseMessage += `${notaInfo}\n`;
+                }
+                
+                if (!esMenor) {
+                    responseMessage += `🔗 Ficha: https://sosvenezuela2026.com (Comunidad)\n`;
+                } else {
+                    responseMessage += `⚠️ <i>La información de ubicación detallada de menores de edad está bajo reserva por seguridad. Contacta a las autoridades competentes para verificación familiar.</i>\n`;
+                }
             }
             responseMessage += `-------------------\n\n`;
         }
