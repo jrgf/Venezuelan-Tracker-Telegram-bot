@@ -286,7 +286,9 @@ async function routeMessage(parsed) {
         }
 
         try {
-            const response = await axios.get('https://api.responsegrid.app/emergencies/11111111-1111-4111-8111-111111111111/public/needs', { timeout: 8000 });
+            const responseGridUrl = process.env.RESPONSEGRID_API_URL || 'https://api.responsegrid.app';
+            const emergencyId = process.env.RESPONSEGRID_EMERGENCY_ID || '11111111-1111-4111-8111-111111111111';
+            const response = await axios.get(`${responseGridUrl}/emergencies/${emergencyId}/public/needs`, { timeout: 8000 });
             const needs = response.data || [];
 
             if (needs.length === 0) {
@@ -565,4 +567,4 @@ async function routeMessage(parsed) {
     }
 }
 
-module.exports = { routeMessage };
+module.exports = { routeMessage, maskCedula, normalizeText, escapeHtml };

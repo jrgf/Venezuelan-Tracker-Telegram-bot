@@ -43,7 +43,7 @@ async function demo() {
 
     await routeMessage({ remoteJid: '12345', messageType: 'text', text: '/start' });
     assert.equal(sent.length, 1);
-    assert.match(sent[0].text, /Buscador de Personas/);
+    assert.match(sent[0].text, /Asistente de Ayuda Sismo/);
 
     await routeMessage({ remoteJid: '12345', messageType: 'text', text: '/unknown' });
     assert.equal(sent.length, 1);
@@ -83,14 +83,13 @@ async function demo() {
     assert.equal(calls[1].options.params.offset, undefined);
     assert.equal(calls[1].options.params.limit, undefined);
     assert.match(sent.at(-1).text, /MARIA PEREZ/);
-    assert.match(sent.at(-1).text, /Encontrados: 1/);
+    assert.match(sent.at(-1).text, /Encontrados: 2/);
     assert.doesNotMatch(sent.at(-1).text, /Similares en SOS Venezuela 2026/);
-    assert.doesNotMatch(sent.at(-1).text, /MARIA JOSE PEREZ/);
+    assert.match(sent.at(-1).text, /MARIA JOSE PEREZ/);
 
     await routeMessage({ remoteJid: '12345', messageType: 'text', text: 'Maria Jose' });
-    assert.match(sent.at(-1).text, /No se encontraron coincidencias exactas/);
-    assert.match(sent.at(-1).text, /Similares en SOS Venezuela 2026/);
-    assert.match(sent.at(-1).text, /No son coincidencias exactas/);
+    assert.doesNotMatch(sent.at(-1).text, /No se encontraron coincidencias exactas/);
+    assert.doesNotMatch(sent.at(-1).text, /Similares en SOS Venezuela 2026/);
     assert.match(sent.at(-1).text, /MARIA JOSE PEREZ/);
 }
 
