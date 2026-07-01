@@ -17,9 +17,34 @@ function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// In-memory rate limiting store for Telegram spammers
+const rateLimitMap = new Map();
+const RATE_LIMIT_WINDOW_MS = 60000; // 1 minuto
+const RATE_LIMIT_MAX_REQUESTS = 20; // Máximo 20 mensajes por minuto
+
+function isRateLimited(userId) {
+    const now = Date.now();
+    const userRecord = rateLimitMap.get(userId);
+    if (!userRecord) {
+        rateLimitMap.set(userId, { count: 1, resetTime: now + RATE_LIMIT_WINDOW_MS });
+        return false;
+    }
+    if (now > userRecord.resetTime) {
+        rateLimitMap.set(userId, { count: 1, resetTime: now + RATE_LIMIT_WINDOW_MS });
+        return false;
+    }
+    userRecord.count++;
+    return userRecord.count > RATE_LIMIT_MAX_REQUESTS;
+}
+
 async function processUpdate(update) {
     const parsed = parseMessage(update);
     if (!parsed || parsed.chatType !== 'private') {
+        return;
+    }
+
+    if (isRateLimited(parsed.remoteJid)) {
+        console.warn(`[Telegram] Rate limit exceeded for user (${parsed.remoteJid}), discarding message.`);
         return;
     }
 
