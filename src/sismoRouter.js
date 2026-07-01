@@ -62,25 +62,29 @@ async function routeMessage(parsed) {
         const welcome = [
             "🇻🇪 <b>Asistente de Ayuda Sismo — Venezuela 2026</b> 🇻🇪",
             "",
-            "Este servicio automatizado te permite consultar información en tiempo real para la asistencia humanitaria.",
+            "Este servicio automatizado te permite consultar información unificada en tiempo real de <b>SOS Venezuela</b>, <b>AcopioVE</b> y <b>ResponseGrid</b> para la asistencia humanitaria.",
             "",
-            "🔍 <b>1. Buscar Personas Localizadas</b> (en hospitales/refugios):",
+            "🔍 <b>1. Buscar Personas Localizadas</b>:",
             "• Envía el número de cédula (mínimo 4 dígitos). Ejemplo: <code>17849208</code>",
-            "• Envía el nombre y/o apellido de la persona. Ejemplo: <code>Johanna Aguero</code>",
+            "• Envía el nombre y/o apellido. Ejemplo: <code>Pedro Pérez</code>",
             "",
-            "🏠 <b>2. Buscar Refugios Activos</b>:",
-            "• Envía la palabra <b>refugio</b> y opcionalmente la ciudad. Ejemplo: <code>refugio Caracas</code> o <code>refugio La Guaira</code>",
+            "🏠 <b>2. Buscar Refugios Activos</b> (AcopioVE):",
+            "• Envía <code>refugio</code> + ciudad. Ejemplo: <code>refugio Caracas</code> o <code>refugio La Guaira</code>",
             "",
-            "📦 <b>3. Centros de Acopio (Donaciones)</b>:",
-            "• Envía la palabra <b>acopio</b> y la ciudad. Ejemplo: <code>acopio Valencia</code> o <code>acopio Caracas</code>",
+            "📦 <b>3. Centros de Acopio Consolidados</b> (AcopioVE + ResponseGrid):",
+            "• Envía <code>acopio</code> + ciudad. Ejemplo: <code>acopio Valencia</code> o <code>acopio Caracas</code>",
             "",
-            "📋 <b>4. Necesidades Urgentes (Insumos)</b>:",
-            "• Envía la palabra <b>necesidad</b> y opcionalmente la ciudad. Ejemplo: <code>necesidad Caracas</code> o <code>necesidad La Guaira</code>",
+            "📋 <b>4. Necesidades Urgentes e Insumos</b> (ResponseGrid):",
+            "• Envía la palabra <code>necesidad</code> sola o con filtros de tipo, prioridad o ciudad.",
+            "• Ejemplos: <code>necesidad agua</code>, <code>necesidad urgente caracas</code>, <code>necesidad alimentos</code>",
             "",
-            "🚨 <b>5. Teléfonos de Emergencia</b>:",
-            "• Escribe la palabra <b>emergencia</b> o <b>telefono</b> para ver el directorio de primera respuesta.",
+            "📊 <b>5. Resumen de la Emergencia</b> (ResponseGrid):",
+            "• Escribe la palabra <code>resumen</code> o <code>estadísticas</code> para ver el estado general y el conteo consolidado de insumos y puntos de ayuda.",
             "",
-            "💡 <i>Nota: Datos actualizados de forma colaborativa por voluntarios y reportes oficiales de SOS Venezuela, AcopioVE y ResponseGrid.</i>"
+            "🚨 <b>6. Directorio de Emergencias</b>:",
+            "• Escribe la palabra <code>emergencia</code> o <code>telefono</code> para ver el directorio de primera respuesta.",
+            "",
+            "💡 <i>Nota: Este canal es puramente informativo y de consulta gratuita. Toda la información presentada es verificada de forma oficial y colaborativa por voluntarios en el terreno.</i>"
         ].join('\n');
         return sendText(jid, welcome);
     }
@@ -200,7 +204,7 @@ async function routeMessage(parsed) {
         }
     }
 
-    // 4. Buscar Centros de Acopio (AcopioVE API)
+    // 4. Buscar Centros de Acopio Consolidados (AcopioVE API + ResponseGrid API)
     if (lowerQueryText.startsWith('acopio') || lowerQueryText.startsWith('donar') || command.startsWith('/centros')) {
         const parts = queryText.split(/\s+/);
         let ciudad = parts.slice(1).join(' ').trim();
@@ -223,62 +227,147 @@ async function routeMessage(parsed) {
         }
 
         try {
-            const response = await axios.get('https://api.acopiove.org/v1/centros', {
-                params: {
-                    tipo: 'acopio',
-                    ciudad: ciudad
-                },
-                timeout: 8000
-            });
-            const centros = response.data?.data || [];
+            const responseGridUrl = process.env.RESPONSEGRID_API_URL || 'https://api.responsegrid.app';
+            const emergencyId = process.env.RESPONSEGRID_EMERGENCY_ID || '11111111-1111-4111-8111-111111111111';
 
-            if (centros.length === 0) {
+            const [acopioVeRes, responseGridRes] = await Promise.all([
+                axios.get('https://api.acopiove.org/v1/centros', {
+                    params: { tipo: 'acopio', ciudad: ciudad },
+                    timeout: 8000
+                }).catch(err => {
+                    console.error('[AcopioVE] Error fetching acopio:', err.message);
+                    return { data: { data: [] } };
+                }),
+                axios.get(`${responseGridUrl}/emergencies/${emergencyId}/public/resources`, {
+                    params: { limit: 100 },
+                    timeout: 8000
+                }).catch(err => {
+                    console.error('[ResponseGrid] Error fetching resources:', err.message);
+                    return { data: { items: [] } };
+                })
+            ]);
+
+            const consolidated = [];
+
+            // 1. Agregar resultados de AcopioVE
+            const centrosVe = acopioVeRes.data?.data || [];
+            for (const ctr of centrosVe) {
+                consolidated.push({
+                    source: 'AcopioVE',
+                    name: ctr.name,
+                    address: ctr.address || '',
+                    needs: ctr.necesita_ahora || '',
+                    contact: ctr.contacto || '',
+                    status: ctr.estado || 'abierto'
+                });
+            }
+
+            // 2. Agregar resultados de ResponseGrid filtrando por ciudad
+            const resourcesRg = responseGridRes.data?.items || [];
+            const normCiudad = normalizeText(ciudad);
+            for (const res of resourcesRg) {
+                const address = res.location?.address || '';
+                const city = res.city || '';
+                if (normalizeText(address).includes(normCiudad) || normalizeText(city).includes(normCiudad)) {
+                    consolidated.push({
+                        source: 'ResponseGrid',
+                        name: res.name,
+                        address: address,
+                        needs: Array.isArray(res.accepts) ? res.accepts.join(', ') : '',
+                        contact: res.contact || '',
+                        status: res.publicStatus === 'active' ? 'abierto' : (res.publicStatus === 'saturated' ? 'lleno' : 'cerrado')
+                    });
+                }
+            }
+
+            if (consolidated.length === 0) {
                 const noCtrMsg = `🔍 No se encontraron centros de acopio activos en la ciudad de "${escapeHtml(ciudad)}".`;
                 return sendText(jid, noCtrMsg);
             }
 
-            const displayCentros = centros.slice(0, 5);
-            const total = response.data?.meta?.count || centros.length;
+            const displayCentros = consolidated.slice(0, 5);
+            const total = consolidated.length;
 
             let responseMessage = `📦 <b>Centros de Acopio en ${escapeHtml(ciudad)}</b> (Encontrados: ${total}):\n\n`;
 
             for (const ctr of displayCentros) {
-                const estado = ctr.estado || '';
-                const estadoEmoji = estado === 'abierto' ? '🟢' : (estado === 'lleno' ? '🟡' : '🔴');
-                responseMessage += `🏢 <b>${escapeHtml(ctr.name)}</b> (${estadoEmoji} ${escapeHtml(estado.toUpperCase())})\n`;
+                const statusEmoji = ctr.status === 'abierto' ? '🟢' : (ctr.status === 'lleno' ? '🟡' : '🔴');
+                responseMessage += `🏢 <b>${escapeHtml(ctr.name)}</b> (${statusEmoji} ${escapeHtml(ctr.status.toUpperCase())}) [${escapeHtml(ctr.source)}]\n`;
                 if (ctr.address) responseMessage += `📍 Dirección: ${escapeHtml(ctr.address)}\n`;
-                if (ctr.necesita_ahora) responseMessage += `📦 Necesita: ${escapeHtml(ctr.necesita_ahora)}\n`;
-                if (ctr.contacto) responseMessage += `📞 Contacto: ${escapeHtml(ctr.contacto)}\n`;
+                if (ctr.needs) responseMessage += `📦 Acepta: ${escapeHtml(ctr.needs)}\n`;
+                if (ctr.contact) responseMessage += `📞 Contacto: ${escapeHtml(ctr.contact)}\n`;
                 responseMessage += `-------------------\n\n`;
             }
 
-            if (total > 5) {
-                responseMessage += `🔗 <i>Hay más centros. Ver todos en el mapa:</i> \nhttps://acopiove.org`;
-            } else {
-                responseMessage += `🔗 <i>Más detalles en:</i> \nhttps://acopiove.org`;
-            }
+            responseMessage += `🔗 <i>Ver mapas de ayuda en vivo:</i>\n`;
+            responseMessage += `• AcopioVE: https://acopiove.org\n`;
+            responseMessage += `• ResponseGrid: https://responsegrid.app`;
 
             const finalMsg = responseMessage.trim();
             cache.set(cacheKey, finalMsg, 120); // 2 minutos de caché
             return sendText(jid, finalMsg);
         } catch (err) {
-            console.error('[AcopioVE] Error fetching acopio:', err.message);
+            console.error('[AcopioConsolidation] Error:', err.message);
             return sendText(jid, "⚠️ Ocurrió un error al buscar centros de acopio. Por favor, intenta de nuevo.");
         }
     }
 
-    // 4. Buscar Necesidades Urgentes (ResponseGrid API)
+    // 5. Buscar Necesidades Urgentes con Filtros Avanzados (ResponseGrid API)
     if (lowerQueryText.startsWith('necesidad') || lowerQueryText.startsWith('necesidades') || lowerQueryText.startsWith('insumos')) {
         const parts = queryText.split(/\s+/);
-        let ciudad = parts.slice(1).join(' ').trim();
+        let terms = parts.slice(1);
 
+        // Mapear categorías y prioridades
+        let category = null;
+        let priority = null;
+        const remainingTerms = [];
+
+        const categoryMap = {
+            agua: 'water',
+            comida: 'food',
+            alimento: 'food',
+            alimentos: 'food',
+            higiene: 'hygiene',
+            ropa: 'clothing',
+            vestimenta: 'clothing',
+            refugio: 'shelter',
+            albergue: 'shelter',
+            medicina: 'medical',
+            medicinas: 'medical',
+            medico: 'medical',
+            médico: 'medical',
+            medicos: 'medical',
+            médicos: 'medical',
+            sanitario: 'medical',
+            herramientas: 'tools'
+        };
+
+        const priorityMap = {
+            urgente: 'urgent',
+            alta: 'high',
+            media: 'medium',
+            baja: 'low'
+        };
+
+        for (const term of terms) {
+            const cleanTerm = term.toLowerCase().replace(/[,.:;]/g, '').trim();
+            if (categoryMap[cleanTerm]) {
+                category = categoryMap[cleanTerm];
+            } else if (priorityMap[cleanTerm]) {
+                priority = priorityMap[cleanTerm];
+            } else {
+                remainingTerms.push(term);
+            }
+        }
+
+        let ciudad = remainingTerms.join(' ').trim();
         if (ciudad.toLowerCase().startsWith('en ')) {
             ciudad = ciudad.slice(3).trim();
         } else if (ciudad.toLowerCase().startsWith('de ')) {
             ciudad = ciudad.slice(3).trim();
         }
 
-        const cacheKey = `necesidades:${ciudad}`;
+        const cacheKey = `necesidades:${category || ''}:${priority || ''}:${ciudad || ''}`;
         const cachedData = cache.get(cacheKey);
 
         if (cachedData) {
@@ -288,17 +377,22 @@ async function routeMessage(parsed) {
         try {
             const responseGridUrl = process.env.RESPONSEGRID_API_URL || 'https://api.responsegrid.app';
             const emergencyId = process.env.RESPONSEGRID_EMERGENCY_ID || '11111111-1111-4111-8111-111111111111';
-            const response = await axios.get(`${responseGridUrl}/emergencies/${emergencyId}/public/needs`, { timeout: 8000 });
+
+            const params = {};
+            if (category) params.category = category;
+            if (priority) params.priority = priority;
+
+            const response = await axios.get(`${responseGridUrl}/emergencies/${emergencyId}/public/needs`, {
+                params,
+                timeout: 8000
+            });
             const needs = response.data || [];
 
             if (needs.length === 0) {
-                const noNeedsMsg = ciudad 
-                    ? `🔍 No se encontraron necesidades urgentes registradas en la ciudad de "${escapeHtml(ciudad)}".`
-                    : "🔍 No se encontraron necesidades urgentes registradas en este momento.";
-                return sendText(jid, noNeedsMsg);
+                return sendText(jid, "🔍 No se encontraron necesidades urgentes registradas con esos filtros.");
             }
 
-            // Filtrar localmente por ciudad
+            // Filtrar localmente por ciudad si se especifica
             let filteredNeeds = needs;
             if (ciudad) {
                 const normCiudad = normalizeText(ciudad);
@@ -323,16 +417,19 @@ async function routeMessage(parsed) {
                 low: '🟢 BAJA'
             };
 
-            let responseMessage = ciudad 
-                ? `📋 <b>Necesidades Urgentes en ${escapeHtml(ciudad)}</b> (Encontrados: ${total}):\n\n`
-                : `📋 <b>Necesidades Urgentes Activas</b> (Encontrados: ${total}):\n\n`;
+            let filterDesc = '';
+            if (category) filterDesc += ` de tipo <b>${escapeHtml(category.toUpperCase())}</b>`;
+            if (priority) filterDesc += ` con prioridad <b>${escapeHtml(priority.toUpperCase())}</b>`;
+            if (ciudad) filterDesc += ` en <b>${escapeHtml(ciudad)}</b>`;
+
+            let responseMessage = `📋 <b>Necesidades Urgentes${filterDesc}</b> (Encontradas: ${total}):\n\n`;
 
             for (const need of displayNeeds) {
                 const pLabel = priorityLabels[need.priority] || need.priority?.toUpperCase() || '🟡 MEDIA';
                 responseMessage += `📦 <b>${escapeHtml(need.title)}</b> (${escapeHtml(pLabel)})\n`;
                 if (need.location?.address) responseMessage += `📍 Ubicación: ${escapeHtml(need.location.address)}\n`;
                 if (need.description) responseMessage += `ℹ️ Detalles: ${escapeHtml(need.description)}\n`;
-                
+
                 const itemsList = need.items || [];
                 if (itemsList.length > 0) {
                     responseMessage += `📋 Artículos requeridos:\n`;
@@ -344,11 +441,7 @@ async function routeMessage(parsed) {
                 responseMessage += `-------------------\n\n`;
             }
 
-            if (total > 5) {
-                responseMessage += `🔗 <i>Hay más necesidades registradas. Ver listado completo en:</i> \nhttps://responsegrid.app`;
-            } else {
-                responseMessage += `🔗 <i>Más detalles e inscripciones de ayuda en:</i> \nhttps://responsegrid.app`;
-            }
+            responseMessage += `🔗 <i>Más detalles e inscripciones de ayuda en:</i> \nhttps://responsegrid.app`;
 
             const finalMsg = responseMessage.trim();
             cache.set(cacheKey, finalMsg, 120); // 2 minutos de caché
@@ -356,6 +449,59 @@ async function routeMessage(parsed) {
         } catch (err) {
             console.error('[ResponseGrid] Error fetching needs:', err.message);
             return sendText(jid, "⚠️ Ocurrió un error al obtener la lista de necesidades. Por favor, intenta de nuevo.");
+        }
+    }
+
+    // 6. Comando de Estadísticas/Resumen de Emergencia (ResponseGrid API)
+    if (lowerQueryText === 'resumen' || lowerQueryText === 'estadisticas' || lowerQueryText === 'estadística' || lowerQueryText === 'estadísticas') {
+        const cacheKey = 'resumen_emergencia';
+        const cachedData = cache.get(cacheKey);
+
+        if (cachedData) {
+            return sendText(jid, cachedData);
+        }
+
+        try {
+            const responseGridUrl = process.env.RESPONSEGRID_API_URL || 'https://api.responsegrid.app';
+            const emergencyId = process.env.RESPONSEGRID_EMERGENCY_ID || '11111111-1111-4111-8111-111111111111';
+
+            const [facetsRes, needsRes] = await Promise.all([
+                axios.get(`${responseGridUrl}/emergencies/${emergencyId}/public/resources/facets`, { timeout: 8000 }),
+                axios.get(`${responseGridUrl}/emergencies/${emergencyId}/public/needs`, { timeout: 8000 })
+            ]);
+
+            const facets = facetsRes.data || {};
+            const needsCount = (needsRes.data || []).length;
+            const byCategory = facets.byCategory || {};
+
+            let responseMessage = `📊 <b>Resumen de la Emergencia (Sismo Venezuela)</b> 📊\n\n`;
+            responseMessage += `📋 <b>Solicitudes de Necesidad</b>: ${needsCount} activas en el terreno.\n\n`;
+            responseMessage += `🏢 <b>Centros de Ayuda / Acopio</b>: ${facets.total || 0} registrados en total.\n`;
+
+            const catLabels = {
+                water: '💧 Agua',
+                food: '🍎 Alimentos',
+                medical: '💊 Material Médico',
+                shelter: '🏠 Albergue/Refugio',
+                hygiene: '🧼 Higiene',
+                clothing: '👕 Ropa',
+                tools: '🔧 Herramientas',
+                other: '📦 Otros'
+            };
+
+            for (const [cat, count] of Object.entries(byCategory)) {
+                const label = catLabels[cat] || `📦 ${cat.toUpperCase()}`;
+                responseMessage += `• ${label}: ${count} puntos.\n`;
+            }
+
+            responseMessage += `\n🔗 <i>Ver mapa de ayuda interactivo e información oficial en:</i>\nhttps://responsegrid.app`;
+
+            const finalMsg = responseMessage.trim();
+            cache.set(cacheKey, finalMsg, 300); // 5 minutos de caché para estadísticas
+            return sendText(jid, finalMsg);
+        } catch (err) {
+            console.error('[ResponseGrid] Error fetching stats:', err.message);
+            return sendText(jid, "⚠️ Ocurrió un error al obtener las estadísticas. Por favor, intenta de nuevo.");
         }
     }
 
